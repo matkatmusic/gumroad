@@ -3131,6 +3131,134 @@ describe Subscription, :vcr do
       end
     end
 
+    context "when a membership tier price change is effective" do
+      let(:product) { create(:membership_product_with_preset_tiered_pricing, recurrence_price_values: [{ monthly: { enabled: true, price: 5 } }, { monthly: { enabled: true, price: 10 } }]) }
+      let(:tier) { product.tiers.first }
+      let(:original_price_cents) { 500 }
+      let(:new_price_cents) { 600 }
+      let(:membership_purchase) { create(:membership_purchase, price_cents: original_price_cents, link: product, variant_attributes: [tier]) }
+      let(:subscription) { membership_purchase.subscription }
+
+      before do
+        # Verify setup: subscription starts at original price
+        expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
+      end
+
+      context "when the subscription is inactive and tier price changed with feature enabled and effective date passed" do
+        before do
+          subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
+          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+          tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+        end
+
+        it "returns the new tier price" do
+          travel_to(9.days.from_now) do
+            expect(subscription.current_subscription_price_cents).to eq(new_price_cents)
+          end
+        end
+      end
+
+      context "when the effective date is in the future" do
+        before do
+          subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
+          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+          tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 1.week.from_now.to_date)
+        end
+
+        it "returns the original price" do
+          expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
+        end
+      end
+
+      context "when the feature is not enabled on the tier" do
+        before do
+          subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
+          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+          tier.update!(apply_price_changes_to_existing_memberships: false, subscription_price_change_effective_date: nil)
+        end
+
+        it "returns the original price" do
+          expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
+        end
+      end
+
+      context "when the subscription is active and plan change was already applied" do
+        before do
+          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+          tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+          # Simulate that set_price_and_rate already updated the original purchase (as ScheduleMembershipPriceUpdatesJob would have done)
+          membership_purchase.set_price_and_rate
+          membership_purchase.save!
+        end
+
+        it "returns the new price consistently" do
+          travel_to(9.days.from_now) do
+            expect(subscription.current_subscription_price_cents).to eq(new_price_cents)
+          end
+        end
+      end
+
+      context "when the inactive subscription has an offer code with active discount" do
+        let(:offer_code) { create(:offer_code, products: [product], amount_cents: 100, duration_in_billing_cycles: 3) }
+
+        before do
+          membership_purchase.update!(offer_code:, displayed_price_cents: original_price_cents - 100)
+          membership_purchase.create_purchase_offer_code_discount!(
+            offer_code:,
+            offer_code_amount: 100,
+            offer_code_is_percent: false,
+            pre_discount_minimum_price_cents: original_price_cents,
+            duration_in_billing_cycles: 3
+          )
+          subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
+          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+          tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+          subscription.reload
+        end
+
+        it "returns the updated discounted price" do
+          travel_to(9.days.from_now) do
+            # discount_applies_to_next_charge? is true because only 1 successful purchase < 3 duration
+            # set_price_and_rate recalculates displayed_price_cents with the offer code applied to the new tier price
+            result = subscription.current_subscription_price_cents
+            expect(result).to eq(new_price_cents - 100)
+          end
+        end
+      end
+
+      context "when the tier price hasn't actually changed" do
+        before do
+          subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
+          tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+        end
+
+        it "returns the same original price" do
+          travel_to(9.days.from_now) do
+            expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
+          end
+        end
+      end
+
+      context "scenario: subscriber reactivates after creator changes rate" do
+        it "charges the new rate when a deactivated subscriber resubscribes" do
+          # Step 1: User subscribes to membership at $5/month - already done in setup
+
+          # Step 2: Subscription auto-expires after some time
+          subscription.update!(deactivated_at: 3.months.ago, cancelled_at: 3.months.ago)
+          expect(subscription.deactivated?).to be true
+
+          # Step 3: Creator changes rate to $6/month and enables "apply to existing"
+          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+          tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+
+          # Step 4: Time passes, effective date is now in the past. User comes back to resubscribe.
+          travel_to(9.days.from_now) do
+            expect(subscription.current_subscription_price_cents).to eq(new_price_cents)
+          end
+        end
+      end
+    end
+
     context "installment plans" do
       let!(:product) { create(:product, name: "Awesome product", user: seller, price_cents: 1000) }
       let!(:installment_plan) { create(:product_installment_plan, link: product, number_of_installments: 3) }

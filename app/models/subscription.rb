@@ -199,10 +199,11 @@ class Subscription < ApplicationRecord
   def current_subscription_price_cents
     if is_installment_plan
       original_purchase.minimum_paid_price_cents
+    elsif membership_price_change_effective?
+      updated_price = calculate_updated_tier_price
+      updated_price.present? && updated_price > 0 ? updated_price : base_subscription_price_cents
     else
-      discount_applies_to_next_charge? ?
-        original_purchase.displayed_price_cents :
-        original_purchase.displayed_price_cents_before_offer_code(include_deleted: true)
+      base_subscription_price_cents
     end
   end
 
@@ -901,6 +902,32 @@ class Subscription < ApplicationRecord
   end
 
   private
+    def base_subscription_price_cents
+      discount_applies_to_next_charge? ?
+        original_purchase.displayed_price_cents :
+        original_purchase.displayed_price_cents_before_offer_code(include_deleted: true)
+    end
+
+    def membership_price_change_effective?
+      t = tier
+      t&.apply_price_changes_to_existing_memberships? &&
+        t.subscription_price_change_effective_date.present? &&
+        t.subscription_price_change_effective_date <= Date.today
+    end
+
+    def calculate_updated_tier_price
+      new_price = nil
+      ActiveRecord::Base.transaction do
+        original_purchase.set_price_and_rate
+        new_price = discount_applies_to_next_charge? ?
+          original_purchase.displayed_price_cents :
+          original_purchase.displayed_price_cents_before_offer_code(include_deleted: true)
+        raise ActiveRecord::Rollback
+      end
+      original_purchase.reload
+      new_price
+    end
+
     def send_notification_webhook(resource_name:, params: nil)
       args = [5.seconds, nil, nil, resource_name, id]
       args << params.deep_stringify_keys if params.present?
