@@ -495,17 +495,16 @@ describe Subscription::RestartAtCheckoutService do
       let(:new_price_cents) { 600 }
 
       let!(:subscription) do
-        sub = create(:subscription, link: product, user: buyer)
-        create(:purchase,
-               link: product,
-               purchaser: buyer,
-               email: email,
-               subscription: sub,
-               is_original_subscription_purchase: true,
-               price_cents: original_price_cents,
-               variant_attributes: [tier]
+        sub = create_subscription_for_product(
+          product: product,
+          purchaser: buyer,
+          email: email,
+          cancelled_at: 1.day.ago,
+          cancelled_by_buyer: true,
+          deactivated_at: 1.day.ago
         )
-        sub.update!(cancelled_at: 1.day.ago, cancelled_by_buyer: true, deactivated_at: 1.day.ago)
+        sub.original_purchase.update_columns(price_cents: original_price_cents)
+        sub.original_purchase.variant_attributes = [tier]
         sub
       end
 
