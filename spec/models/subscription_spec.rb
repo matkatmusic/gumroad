@@ -3140,7 +3140,6 @@ describe Subscription, :vcr do
       let(:subscription) { membership_purchase.subscription }
 
       before do
-        # Verify setup: subscription starts at original price
         expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
       end
 
@@ -3186,7 +3185,6 @@ describe Subscription, :vcr do
         before do
           tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
-          # Simulate that set_price_and_rate already updated the original purchase (as ScheduleMembershipPriceUpdatesJob would have done)
           membership_purchase.set_price_and_rate
           membership_purchase.save!
         end
@@ -3218,10 +3216,7 @@ describe Subscription, :vcr do
 
         it "returns the updated discounted price" do
           travel_to(9.days.from_now) do
-            # discount_applies_to_next_charge? is true because only 1 successful purchase < 3 duration
-            # set_price_and_rate recalculates displayed_price_cents with the offer code applied to the new tier price
-            result = subscription.current_subscription_price_cents
-            expect(result).to eq(new_price_cents - 100)
+            expect(subscription.current_subscription_price_cents).to eq(new_price_cents - 100)
           end
         end
       end
@@ -3241,17 +3236,12 @@ describe Subscription, :vcr do
 
       context "scenario: subscriber reactivates after creator changes rate" do
         it "charges the new rate when a deactivated subscriber resubscribes" do
-          # Step 1: User subscribes to membership at $5/month - already done in setup
-
-          # Step 2: Subscription auto-expires after some time
           subscription.update!(deactivated_at: 3.months.ago, cancelled_at: 3.months.ago)
           expect(subscription.deactivated?).to be true
 
-          # Step 3: Creator changes rate to $6/month and enables "apply to existing"
           tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
 
-          # Step 4: Time passes, effective date is now in the past. User comes back to resubscribe.
           travel_to(9.days.from_now) do
             expect(subscription.current_subscription_price_cents).to eq(new_price_cents)
           end

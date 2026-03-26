@@ -261,7 +261,6 @@ describe Subscription::RestartAtCheckoutService do
       end
 
       before do
-        # Creator changes the tier price and enables "apply to existing"
         tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
         tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
       end
