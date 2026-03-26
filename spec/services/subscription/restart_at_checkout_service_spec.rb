@@ -488,6 +488,57 @@ describe Subscription::RestartAtCheckoutService do
       end
     end
 
+    describe "reactivating subscription after tier price change" do
+      let(:product) { create(:membership_product_with_preset_tiered_pricing, user: seller, recurrence_price_values: [{ monthly: { enabled: true, price: 5 } }, { monthly: { enabled: true, price: 10 } }]) }
+      let(:tier) { product.tiers.first }
+      let(:original_price_cents) { 500 }
+      let(:new_price_cents) { 600 }
+
+      let!(:subscription) do
+        sub = create(:subscription, link: product, user: buyer)
+        create(:purchase,
+               link: product,
+               purchaser: buyer,
+               email: email,
+               subscription: sub,
+               is_original_subscription_purchase: true,
+               price_cents: original_price_cents,
+               variant_attributes: [tier]
+        )
+        sub.update!(cancelled_at: 1.day.ago, cancelled_by_buyer: true, deactivated_at: 1.day.ago)
+        sub
+      end
+
+      before do
+        tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
+        tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+      end
+
+      it "passes the new tier price to UpdaterService when perceived_price_cents is not provided" do
+        travel_to(9.days.from_now) do
+          params_without_perceived_price = {
+            purchase: {
+              email: email,
+              browser_guid: browser_guid
+            },
+            price_id: product.prices.alive.first.external_id,
+            remote_ip: "127.0.0.1"
+          }
+
+          service = described_class.new(
+            subscription: subscription,
+            product: product,
+            params: params_without_perceived_price,
+            buyer: buyer
+          )
+
+          transformed_params = service.send(:updater_service_params)
+          expect(transformed_params[:perceived_price_cents]).to eq(new_price_cents)
+          expect(transformed_params[:perceived_upgrade_price_cents]).to eq(new_price_cents)
+        end
+      end
+    end
+
     # Integration tests - verify error handling works correctly
     # Success cases are covered by UpdaterService specs; we just verify delegation
     describe "integration behavior" do
