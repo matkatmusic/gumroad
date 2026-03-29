@@ -438,25 +438,26 @@ describe Subscription::RestartAtCheckoutService do
       let(:new_offer_code) { create(:offer_code, code: "new80", amount_cents: nil, amount_percentage: 80, products: [pwyw_product], user: seller) }
 
       let!(:subscription) do
-        sub = create(:subscription, link: pwyw_product, user: buyer)
-        purchase = create(:purchase,
-                          link: pwyw_product,
-                          purchaser: buyer,
-                          email: email,
-                          subscription: sub,
-                          is_original_subscription_purchase: true,
-                          price_cents: 500_00,
-                          displayed_price_cents: 500_00,
-                          perceived_price_cents: 500_00,
-                          offer_code: original_offer_code,
-                          variant_attributes: pwyw_product.tiers.to_a)
+        sub = create_subscription_for_product(
+          product: pwyw_product,
+          purchaser: buyer,
+          email: email,
+          cancelled_at: 1.day.ago,
+          cancelled_by_buyer: true,
+          deactivated_at: 1.day.ago
+        )
+        purchase = sub.original_purchase
+        purchase.update_columns(
+          price_cents: 500_00,
+          displayed_price_cents: 500_00,
+          offer_code_id: original_offer_code.id
+        )
         purchase.create_purchase_offer_code_discount!(
           offer_code: original_offer_code,
           offer_code_amount: 85,
           offer_code_is_percent: true,
           pre_discount_minimum_price_cents: purchase.minimum_paid_price_cents_per_unit_before_discount
         )
-        sub.update!(cancelled_at: 1.day.ago, cancelled_by_buyer: true, deactivated_at: 1.day.ago)
         sub
       end
 
