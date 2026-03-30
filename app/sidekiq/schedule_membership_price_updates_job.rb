@@ -12,9 +12,10 @@ class ScheduleMembershipPriceUpdatesJob
     return unless product.is_tiered_membership?
 
     product.subscriptions.includes(original_purchase: :variant_attributes).find_each do |subscription|
-      next if subscription.charges_completed? || subscription.deactivated?
+      next if subscription.charges_completed?
       next unless subscription.for_tier?(tier)
       effective_on = subscription.end_time_of_subscription
+      effective_on = [effective_on, tier.subscription_price_change_effective_date].max if subscription.deactivated?
       effective_on += subscription.period until effective_on >= tier.subscription_price_change_effective_date
 
       original_purchase = subscription.original_purchase

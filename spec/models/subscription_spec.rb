@@ -3272,14 +3272,14 @@ describe Subscription, :vcr do
         expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
       end
 
-      context "when the subscription is inactive and tier price changed with feature enabled and effective date passed" do
+      context "when the subscription is inactive and a precomputed plan change exists with effective date passed" do
         before do
           subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
-          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+          create(:subscription_plan_change, subscription: subscription, tier: tier, perceived_price_cents: new_price_cents, for_product_price_change: true, effective_on: 8.days.from_now.to_date)
         end
 
-        it "returns the new tier price" do
+        it "returns the new tier price from the precomputed plan change" do
           travel_to(9.days.from_now) do
             expect(subscription.current_subscription_price_cents).to eq(new_price_cents)
           end
@@ -3289,8 +3289,8 @@ describe Subscription, :vcr do
       context "when the effective date is in the future" do
         before do
           subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
-          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 1.week.from_now.to_date)
+          create(:subscription_plan_change, subscription: subscription, tier: tier, perceived_price_cents: new_price_cents, for_product_price_change: true, effective_on: 1.week.from_now.to_date)
         end
 
         it "returns the original price" do
@@ -3301,7 +3301,6 @@ describe Subscription, :vcr do
       context "when the feature is not enabled on the tier" do
         before do
           subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
-          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: false, subscription_price_change_effective_date: nil)
         end
 
@@ -3310,23 +3309,22 @@ describe Subscription, :vcr do
         end
       end
 
-      context "when the subscription is active and plan change was already applied" do
+      context "when the subscription is active and a precomputed plan change exists" do
         before do
-          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
-          membership_purchase.set_price_and_rate
-          membership_purchase.save!
+          create(:subscription_plan_change, subscription: subscription, tier: tier, perceived_price_cents: new_price_cents, for_product_price_change: true, effective_on: 8.days.from_now.to_date)
         end
 
-        it "returns the new price consistently" do
+        it "returns the new price from the precomputed plan change" do
           travel_to(9.days.from_now) do
             expect(subscription.current_subscription_price_cents).to eq(new_price_cents)
           end
         end
       end
 
-      context "when the inactive subscription has an offer code with active discount" do
+      context "when the inactive subscription has an offer code with active discount and a precomputed plan change" do
         let(:offer_code) { create(:offer_code, products: [product], amount_cents: 100, duration_in_billing_cycles: 3) }
+        let(:discounted_new_price) { new_price_cents - 100 }
 
         before do
           membership_purchase.update!(offer_code:, displayed_price_cents: original_price_cents - 100)
@@ -3338,25 +3336,25 @@ describe Subscription, :vcr do
             duration_in_billing_cycles: 3
           )
           subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
-          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+          create(:subscription_plan_change, subscription: subscription, tier: tier, perceived_price_cents: discounted_new_price, for_product_price_change: true, effective_on: 8.days.from_now.to_date)
           subscription.reload
         end
 
-        it "returns the updated discounted price" do
+        it "returns the precomputed discounted price" do
           travel_to(9.days.from_now) do
-            expect(subscription.current_subscription_price_cents).to eq(new_price_cents - 100)
+            expect(subscription.current_subscription_price_cents).to eq(discounted_new_price)
           end
         end
       end
 
-      context "when the tier price hasn't actually changed" do
+      context "when no plan change record exists" do
         before do
           subscription.update!(deactivated_at: 1.week.ago, cancelled_at: 2.weeks.ago)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
         end
 
-        it "returns the same original price" do
+        it "returns the original price" do
           travel_to(9.days.from_now) do
             expect(subscription.current_subscription_price_cents).to eq(original_price_cents)
           end
@@ -3364,12 +3362,12 @@ describe Subscription, :vcr do
       end
 
       context "scenario: subscriber reactivates after creator changes rate" do
-        it "charges the new rate when a deactivated subscriber resubscribes" do
+        it "charges the new rate from the precomputed plan change" do
           subscription.update!(deactivated_at: 3.months.ago, cancelled_at: 3.months.ago)
           expect(subscription.deactivated?).to be true
 
-          tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
           tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+          create(:subscription_plan_change, subscription: subscription, tier: tier, perceived_price_cents: new_price_cents, for_product_price_change: true, effective_on: 8.days.from_now.to_date)
 
           travel_to(9.days.from_now) do
             expect(subscription.current_subscription_price_cents).to eq(new_price_cents)

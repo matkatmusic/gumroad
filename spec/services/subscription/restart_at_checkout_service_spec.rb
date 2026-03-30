@@ -512,6 +512,7 @@ describe Subscription::RestartAtCheckoutService do
       before do
         tier.prices.alive.is_buy.find_by(recurrence: BasePrice::Recurrence::MONTHLY).update!(price_cents: new_price_cents)
         tier.update!(apply_price_changes_to_existing_memberships: true, subscription_price_change_effective_date: 8.days.from_now.to_date)
+        create(:subscription_plan_change, subscription: subscription, tier: tier, perceived_price_cents: new_price_cents, for_product_price_change: true, effective_on: 8.days.from_now.to_date)
       end
 
       it "passes the new tier price to UpdaterService when perceived_price_cents is not provided" do

@@ -191,11 +191,16 @@ describe ScheduleMembershipPriceUpdatesJob do
         end
 
         context "for a subscription that is inactive" do
-          it "does nothing" do
-            enabled_subscription.deactivate!
+          it "records a plan change with effective_on based on the price change effective date" do
+            enabled_subscription.update!(deactivated_at: 1.month.ago)
+
             expect do
               described_class.new.perform(enabled_tier.id)
-            end.not_to change { enabled_subscription.subscription_plan_changes.count }
+            end.to change { enabled_subscription.subscription_plan_changes.for_product_price_change.alive.count }.by(1)
+
+            plan_change = enabled_subscription.subscription_plan_changes.for_product_price_change.alive.sole
+            expect(plan_change.perceived_price_cents).to eq(new_price)
+            expect(plan_change.effective_on).to be >= effective_on
           end
         end
 

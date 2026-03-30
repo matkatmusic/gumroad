@@ -931,16 +931,11 @@ class Subscription < ApplicationRecord
     end
 
     def calculate_updated_tier_price
-      new_price = nil
-      ActiveRecord::Base.transaction do
-        original_purchase.set_price_and_rate
-        new_price = discount_applies_to_next_charge? ?
-          original_purchase.displayed_price_cents :
-          original_purchase.displayed_price_cents_before_offer_code(include_deleted: true)
-        raise ActiveRecord::Rollback
-      end
-      original_purchase.reload
-      new_price
+      subscription_plan_changes
+        .alive.not_applied.for_product_price_change
+        .where("effective_on <= ?", Date.today)
+        .order(created_at: :desc)
+        .first&.perceived_price_cents
     end
 
     def send_notification_webhook(resource_name:, params: nil)
